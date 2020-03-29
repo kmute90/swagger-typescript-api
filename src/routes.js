@@ -136,6 +136,33 @@ const getRouteName = (operationId, method, route, moduleName) => {
   return createCustomOperationId(method, route, moduleName);
 };
 
+const getRouteParams = (parameters, where) =>
+  collect(parameters, (parameter) => {
+    if (parameter.in === where) return parameter;
+
+    const refTypeInfo = getRefType(parameter);
+    return refTypeInfo && refTypeInfo.rawTypeData.in === where && refTypeInfo.rawTypeData;
+  });
+
+const convertRouteParamsIntoObject = (params) =>
+  _.reduce(
+    params,
+    (objectSchema, schemaPart) => ({
+      ...objectSchema,
+      properties: {
+        ...objectSchema.properties,
+        [_.get(schemaPart, "name")]: _.merge(
+          _.omit(schemaPart, "in", "schema"),
+          _.get(schemaPart, "schema"),
+        ),
+      },
+    }),
+    {
+      properties: {},
+      type: "object",
+    },
+  );
+
 const parseRoutes = ({ paths }, parsedSchemas) =>
   _.entries(paths).reduce((routes, [route, requestInfoByMethodsMap]) => {
     parameters = _.get(requestInfoByMethodsMap, "parameters");
@@ -168,18 +195,17 @@ const parseRoutes = ({ paths }, parsedSchemas) =>
           responses,
         } = requestInfo;
         const hasSecurity = !!(security && security.length);
-        const pathParams = collect(parameters, (parameter) => {
-          if (parameter.in === "path") return parameter;
 
-          const refTypeInfo = getRefType(parameter);
-          return refTypeInfo && refTypeInfo.rawTypeData.in === "path" && refTypeInfo.rawTypeData;
-        });
-        const queryParams = collect(parameters, (parameter) => {
-          if (parameter.in === "query") return parameter;
+        const formDataParams = getRouteParams(parameters, "formData");
+        const pathParams = getRouteParams(parameters, "path");
+        const queryParams = getRouteParams(parameters, "query");
 
-          const refTypeInfo = getRefType(parameter);
-          return refTypeInfo && refTypeInfo.rawTypeData.in === "query" && refTypeInfo.rawTypeData;
-        });
+        const hasFormDataParams = formDataParams && formDataParams.length;
+
+        if (hasFormDataParams) {
+          console.log("formDataParams", formDataParams);
+        }
+
         const moduleName = _.camelCase(route.split("/").filter(Boolean)[0]);
 
         const routeName = getRouteName(operationId, method, route, moduleName);
@@ -187,23 +213,12 @@ const parseRoutes = ({ paths }, parsedSchemas) =>
 
         const responsesTypes = getTypesFromResponses(responses, parsedSchemas, operationId);
 
-        const queryObjectSchema = _.reduce(
-          queryParams,
-          (objectSchema, queryPartSchema) => ({
-            ...objectSchema,
-            properties: {
-              ...objectSchema.properties,
-              [queryPartSchema.name]: _.merge(
-                _.omit(queryPartSchema, "in", "schema"),
-                queryPartSchema.schema,
-              ),
-            },
-          }),
-          {
-            properties: {},
-            type: "object",
-          },
-        );
+        const formDataObjectSchema = convertRouteParamsIntoObject(formDataParams);
+        const queryObjectSchema = convertRouteParamsIntoObject(queryParams);
+
+        if (hasFormDataParams) {
+          console.log("formDataObjectSchema", formDataObjectSchema);
+        }
 
         const bodyParamName =
           requestInfo.requestBodyName || (requestBody && requestBody.name) || DEFAULT_BODY_ARG_NAME;
@@ -212,9 +227,15 @@ const parseRoutes = ({ paths }, parsedSchemas) =>
           ? parseSchema(queryObjectSchema, null, inlineExtraFormatters).content
           : null;
 
-        const bodyType = requestBody
+        const bodyType = hasFormDataParams
+          ? parseSchema(formDataObjectSchema, null, inlineExtraFormatters).content
+          : requestBody
           ? getTypeFromRequestInfo(requestBody, parsedSchemas, operationId)
           : null;
+
+        if (hasFormDataParams) {
+          console.log("bodyType", bodyType);
+        }
 
         // Gets all in path parameters from route
         // Example: someurl.com/{id}/{name}
@@ -331,10 +352,16 @@ const parseRoutes = ({ paths }, parsedSchemas) =>
             : []),
         ].filter(Boolean);
 
+        const path = route.replace(/{/g, "${");
+        const hasQuery = !!queryParams.length;
+        const bodyArg = requestBody ? bodyParamName : "null";
+        const upperCaseMethod = _.upperCase(method);
+
         return {
           moduleName: _.replace(moduleName, /^(\d)/, "v$1"),
           security: hasSecurity,
-          hasQuery: !!queryParams.length,
+          hasQuery,
+          hasFormDataParams,
           queryType: queryType || "{}",
           bodyType: bodyType || "never",
           name,
@@ -342,11 +369,23 @@ const parseRoutes = ({ paths }, parsedSchemas) =>
           comments,
           routeArgs,
           specificArgs,
-          method: _.upperCase(method),
-          path: route.replace(/{/g, "${"),
+          method: upperCaseMethod,
+          path,
           returnType: getReturnType(responses, parsedSchemas, operationId),
           errorReturnType: getErrorReturnType(responses, parsedSchemas, operationId),
-          bodyArg: requestBody ? bodyParamName : "null",
+          bodyArg,
+          requestMethodContent:
+            `\`${path}${hasQuery ? `\${this.addQueryParams(${specificArgs.query.name})}` : ""}\`,` +
+            `"${upperCaseMethod}", ` +
+            `${specificArgs.requestParams.name}` +
+            [
+              requestBody && `, ${bodyParamName}`,
+              hasFormDataParams && `${requestBody ? "" : ", null"}, BodyType.FormData`,
+              hasSecurity &&
+                `${hasFormDataParams ? "" : `${requestBody ? "" : ", null"}, BodyType.Json`}, true`,
+            ]
+              .filter(Boolean)
+              .join(""),
         };
       }),
     ];
