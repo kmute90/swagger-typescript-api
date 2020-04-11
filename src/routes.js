@@ -294,7 +294,7 @@ const parseRoutes = ({ paths }, parsedSchemas) =>
           routeArgs = [...requiredArgs, ...optionalArgs];
         }
 
-        routeArgs.push(specificArgs.requestParams);
+        //routeArgs.push(specificArgs.requestParams);
 
         // TODO: get args for formData
         // "name": "file",
