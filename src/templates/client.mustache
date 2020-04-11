@@ -14,10 +14,10 @@ export class ApiClient {
     body?: any
   ): Observable<T> {
     const headers = new HttpHeaders({
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
     });
-    const request = new HttpRequest<T>(method, `${this.baseUrl}${path}`, body, { withCredentials: true, headers: headers});
-    return this.httpClient.request<T>(request).pipe(map(result => <T>(result as any)));
+    const url = `${this.baseUrl}${path}`;
+    return this.httpClient.request<T>(method, url, { body: body, headers: headers, withCredentials: true});
   }
 
 {{#routes}}
